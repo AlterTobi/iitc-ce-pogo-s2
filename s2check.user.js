@@ -552,11 +552,16 @@
 		let cellLayerGroup; // cell shading and borders
 		let gymCenterLayerGroup; // gym centers
 
+		let countLayer; // layer with count of portals in each cell
+
 		// Group of items added to the layer
 		let stopLayers = {};
 		let gymLayers = {};
 		let notpogoLayers = {};
 		let nearbyCircles = {};
+
+		// grouping of the portals in the second level of the grid
+		let cellsPortals = {};
 
 		const highlighterTitle = 'PoGo Tools';
 		const gymCellLevel = 14; // the cell level which is considered when counting POIs to determine # of gyms
@@ -965,9 +970,49 @@
 			select.value = settings.grids[i].level;
 			select.addEventListener('change', e => {
 				settings.grids[i].level = parseInt(select.value, 10);
+				if (i==1)
+					resetGrouping();
+
 				saveSettings();
 				updateMapGrid();
 			});
+		}
+
+		function resetGrouping() {
+			cellsPortals = {};
+			const level = settings.grids[1].level;
+			if (level < 4)
+				return;
+
+			classifyGroup(cellsPortals, allPortals, level, (cell, item) => cell.portals[item.guid] = true);
+		}
+
+		function groupPortal(item) {
+			const level = settings.grids[1].level;
+			if (level < 4)
+				return;
+
+			let cells = cellsPortals;
+			let cell;
+
+			// Compute the cell only once for each level
+			if (!item.cells[level]) {
+				cell = S2.S2Cell.FromLatLng(item, level);
+				item.cells[level] = cell.toString();
+			}
+			const cellId = item.cells[level];
+
+			// Add it to the array of gyms of that cell
+			if (!cells[cellId]) {
+				if (!cell) {
+					cell = S2.S2Cell.FromLatLng(item, level);
+				}
+				cells[cellId] = {
+					cell: cell,
+					portals: {}
+				};
+			}
+			cells[cellId].portals[item.guid] = true;
 		}
 
 		function showS2Dialog() {
@@ -1352,6 +1397,7 @@
 		function drawCellGrid(zoom) {
 			// clear, to redraw
 			gridLayerGroup.clearLayers();
+			countLayer.clearLayers();
 
 			const bounds = map.getBounds();
 			const seenCells = {};
@@ -1365,6 +1411,11 @@
 					if (isCellOnScreen(bounds, cell)) {
 						// on screen - draw it
 						gridLayerGroup.addLayer(drawCell(cell, color, width, opacity));
+
+						// show number of PoI in the cell
+						var cellGroup = cellsPortals[cellStr];
+						if (cellGroup)
+							countLayer.addLayer(writeInCell(cell, Object.keys(cellGroup.portals).length));
 
 						// and recurse to our neighbors
 						const neighbors = cell.getNeighbors();
@@ -1383,8 +1434,6 @@
 					drawCellAndNeighbors(cell, grid.color, grid.width, grid.opacity);
 				}
 			}
-
-			return gridLayerGroup;
 		}
 
 		/**
@@ -2269,6 +2318,19 @@
 		text-shadow: 1px 1px #FFF, 2px 2px 6px #fff, -1px -1px #fff, -2px -2px 6px #fff;
 	}
 
+	@media (min-width: 1000px) {
+		.pogo-text {
+			font-size: 1.2vw;
+		}
+	}
+
+	@media (min-width: 3000px) {
+		.pogo-text {
+			margin-left: -0.5vw !important;
+			margin-top: -0.7vw !important;
+		}
+	}
+
 	#PogoGymInfo {
 		color: #fff;
 		display: none;
@@ -2601,6 +2663,7 @@
 			};
 
 			allPortals[guid] = portal;
+			groupPortal(portal);
 
 			// If it's already classified in Pokemon, get out
 			const pogoData = thisPlugin.findByGuid(guid);
@@ -2728,6 +2791,9 @@
 		 */
 		function checkNewPortals() {
 			checkNewPortalsTimer = null;
+
+			// reuse to update grid counters
+			drawCellGrid(map.getZoom());
 
 			// don't try to classify if we don't have all the portal data
 			if (map.getZoom() < 15)
@@ -3728,6 +3794,9 @@
 			gridLayerGroup = L.layerGroup();
 			// this layer will contain the gym centers for checking ex eligibility
 			gymCenterLayerGroup = L.featureGroup();
+
+			countLayer = L.layerGroup();
+			window.addLayerGroup('PoI in cell counter', countLayer, false);
 
 			thisPlugin.addAllMarkers();
 
